@@ -5,7 +5,13 @@ using static OsrsTouch.Native;
 namespace OsrsTouch {
 
 /// <summary>One finger on the screen, in screen pixels.</summary>
-struct Contact { public uint Id; public double X, Y; public Contact(uint id, double x, double y) { Id = id; X = x; Y = y; } }
+struct Contact
+{
+    public uint Id;
+    public double X, Y;     // screen pixels, once the mapping has been applied
+    public double U, V;     // the panel's own coordinates, 0..1 on each axis
+    public Contact(uint id, double x, double y, double u, double v) { Id = id; X = x; Y = y; U = u; V = v; }
+}
 
 /// <summary>
 /// Reads raw HID reports from the touchscreen (works in the background via RIDEV_INPUTSINK)
@@ -165,7 +171,8 @@ unsafe class TouchReader
                 if (LogRaw) Program.Log(string.Format("    slot {0}: id={1} tip={2} x={3} y={4}", i, id, tip ? 1 : 0, x, y));
                 if (!tip) continue;
                 for (int k = d.Pending.Count - 1; k >= 0; k--) if (d.Pending[k].Id == id) d.Pending.RemoveAt(k);
-                d.Pending.Add(new Contact(id, x * sw / d.MaxX, y * sh / d.MaxY));
+                double u = (double)x / d.MaxX, v = (double)y / d.MaxY;
+                d.Pending.Add(new Contact(id, u * sw, v * sh, u, v));
             }
             d.Received += found;
             if (LogRaw) Program.Log(string.Format("  report: count={0} slots-filled={1} have={2}/{3}", haveCc ? cc.ToString() : "-", found, d.Received, d.Expected));

@@ -56,6 +56,8 @@ class Config
     public bool Verbose = false;
     public bool LogRaw = false;
     public bool StartMinimized = false;
+    public bool Calibrate = true;
+    public string ScreenRotation = "auto";   // auto, 0, 90, 180, 270
 
     public static string PathFor() { return System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OsrsTouch.ini"); }
 
@@ -149,6 +151,13 @@ PassThroughRightPx = 0
 PassThroughBottomPx = 0
 ; Start with the console window minimised (the autostart shortcut sets this itself).
 StartMinimized = false
+; Which way up the screen is. auto asks Windows, which is right on every normal setup - taps
+; land correctly the instant you rotate the screen. Set 0, 90, 180 or 270 only if Windows
+; reports it wrongly and portrait touches land in the wrong place.
+ScreenRotation = auto
+; As a backstop, also learn the mapping from Windows' own touch positions, which covers an odd
+; panel or a touchscreen that isn't the primary display. Leave this on.
+Calibrate = true
 
 ; ---- safety / troubleshooting
 ; Keep ignoring Windows' own touch-clicks for this long after a gesture ends.
@@ -220,6 +229,8 @@ LogRaw = false
                     case "verbose": c.Verbose = B(v); break;
                     case "lograw": c.LogRaw = B(v); break;
                     case "startminimized": c.StartMinimized = B(v); break;
+                    case "calibrate": c.Calibrate = B(v); break;
+                    case "screenrotation": c.ScreenRotation = v.ToLowerInvariant(); break;
                 }
             }
         }

@@ -66,6 +66,15 @@ static unsafe class Program
     // The hook runs on its own thread and may only read these - no API calls, no logging,
     // no allocation. Windows ignores a low-level hook that takes too long, and a hook that
     // gets ignored stops blocking anything.
+    static volatile int winTouchX, winTouchY;    // where Windows says the finger is (already rotated)
+    static long winTouchTick;
+    static readonly Calibrator calib = new Calibrator();
+    static int tapDiagLeft = 20;        // log the first few taps' positions even without Verbose
+    static bool startWinValid; static double startWinX, startWinY;
+    static double lastContactU, lastContactV; static ulong lastContactTick; static bool haveContact;
+    static long pairedStamp;
+    static int winTouchSeen;
+
     static volatile bool blockTouch;
     static volatile int bLeft, bTop, bRight, bBottom;
     static int blockedCount;
@@ -161,6 +170,16 @@ static unsafe class Program
             ParseColor(cfg.BlipColor, out br, out bg, out bb);
             blip = new TapOverlay(Marshal.GetFunctionPointerForDelegate(wndProcKeep), cfg.BlipSizePx, cfg.BlipMs, cfg.BlipAlpha, br, bg, bb);
         }
+
+        if (cfg.ScreenRotation != "auto")
+        {
+            int forced;
+            if (int.TryParse(cfg.ScreenRotation, out forced) && (forced == 0 || forced == 90 || forced == 180 || forced == 270))
+                ScreenMap.Forced = forced;
+            else Log("ScreenRotation = " + cfg.ScreenRotation + " isn't one of auto/0/90/180/270 - asking Windows instead.");
+        }
+        ScreenMap.Refresh(IntPtr.Zero);
+        Log("screen: " + ScreenMap.Describe());
 
         reader = new TouchReader { Verbose = cfg.Verbose, LogRaw = cfg.LogRaw };
         reader.Frame += OnFrame;
@@ -345,6 +364,9 @@ static unsafe class Program
             if (fromTouch)
             {
                 int x = info->pt.X, y = info->pt.Y;
+                winTouchX = x; winTouchY = y;        // cheap: two stores, no calls
+                winTouchSeen++;
+                System.Threading.Interlocked.Exchange(ref winTouchTick, (long)GetTickCount64());
                 if (x >= bLeft && x < bRight && y >= bTop && y < bBottom)
                 {
                     blockedCount++;      // everything the game sees, we send ourselves
@@ -358,6 +380,8 @@ static unsafe class Program
     static void OnTick()
     {
         ulong now = GetTickCount64();
+        CheckDisplay();
+        CatchWindowsTouchPoint(now);
         if (blip != null) blip.Tick();
         UpdateCursorVisibility();
         if (liftPending && now - liftTick >= (ulong)cfg.LiftConfirmMs) { liftPending = false; EndTouch(); }
@@ -377,6 +401,22 @@ static unsafe class Program
             if (cfg.Verbose) Log("touchscreen went quiet - ending gesture");
             EndTouch();
         }
+    }
+
+    /// <summary>
+    /// Keeps an eye on the display the game is on - which monitor, and which way up. Rotating the
+    /// screen changes where a given spot on the glass appears, so anything learned before the
+    /// rotation is now wrong and has to go.
+    /// </summary>
+    static void CheckDisplay()
+    {
+        // Follow the game's own window, so a second monitor with a browser on it doesn't drag the
+        // mapping away. Before the game has ever been in front, the primary display will do.
+        IntPtr h = ForegroundIsGame() ? GetForegroundWindow() : IntPtr.Zero;
+        if (h == IntPtr.Zero && ScreenMap.Known) return;
+        if (!ScreenMap.Refresh(h)) return;
+        Log("screen: " + ScreenMap.Describe());
+        calib.Reset();
     }
 
     /// <summary>
@@ -427,6 +467,16 @@ static unsafe class Program
     static void OnFrame(List<Contact> frame)
     {
         lastRawTick = GetTickCount64();
+
+        // Put every contact through the learned panel-to-screen mapping.
+        for (int i = 0; i < frame.Count; i++)
+        {
+            var raw = frame[i];
+            double mx, my;
+            calib.Map(raw.U, raw.V, out mx, out my);
+            frame[i] = new Contact(raw.Id, mx, my, raw.U, raw.V);
+        }
+        if (cfg.Calibrate) LearnMapping(frame);
         int n = frame.Count;
         if (n != touchCount && (cfg.Verbose || cfg.DiagnoseOnly))
             Log("fingers: " + n + (n > 0 ? "  " + string.Join(" ", frame.ConvertAll(t => "#" + t.Id + "(" + t.X.ToString("0") + "," + t.Y.ToString("0") + ")").ToArray()) : ""));
@@ -477,12 +527,54 @@ static unsafe class Program
         if (mode == Mode.Rotate) UpdateRotate(c);
     }
 
+    /// <summary>
+    /// Windows turns the first touch into a mouse click about 85ms after your finger lands, and
+    /// that click carries the correctly rotated screen position. Watch for it arriving, rather
+    /// than looking for it at touch-down when it doesn't exist yet.
+    /// </summary>
+    static void CatchWindowsTouchPoint(ulong now)
+    {
+        if (!cfg.Calibrate) return;
+        long stamp = System.Threading.Interlocked.Read(ref winTouchTick);
+        if (stamp == 0 || stamp == pairedStamp) return;
+
+        // Use it as this touch's click position (the first one we see for this touch).
+        if (touchActive && !startWinValid && (ulong)stamp >= startTick && (ulong)stamp - startTick < 700)
+        {
+            startWinValid = true;
+            startWinX = winTouchX; startWinY = winTouchY;
+            if (cfg.Verbose) Log("windows puts this touch at " + winTouchX + "," + winTouchY);
+        }
+
+        // And teach the mapping, by pairing it with where the finger was at that moment.
+        if (haveContact && Math.Abs((long)lastContactTick - stamp) <= 120)
+        {
+            pairedStamp = stamp;
+            calib.Add(lastContactU, lastContactV, winTouchX, winTouchY);
+        }
+    }
+
+    /// <summary>
+    /// Pair a finger with the screen position Windows worked out for it. Windows knows the real
+    /// transform (rotation, which display), so a handful of these teach us the same thing.
+    /// </summary>
+    static void LearnMapping(List<Contact> frame)
+    {
+        // Only the primary contact produces a Windows click, so only single-finger frames help.
+        haveContact = frame.Count == 1;
+        if (!haveContact) return;
+        lastContactU = frame[0].U; lastContactV = frame[0].V; lastContactTick = lastRawTick;
+    }
+
     static void StartTouch(Contact c)
     {
         touchActive = true;
         mode = Mode.None;
         sx = c.X; sy = c.Y;
         startTick = GetTickCount64();
+
+        startWinValid = false;      // Windows' click for this touch hasn't happened yet; see OnTick
+
         handling = PointInGame(c.X, c.Y) && !InPassThroughBand(c.X, c.Y);
         if (cfg.Verbose) Log(handling ? "finger down - deciding tap / hold / swipe" : "finger down outside our area - leaving it to Windows");
 
@@ -521,6 +613,7 @@ static unsafe class Program
 
     static void Tap()
     {
+        UseWindowsPoint();
         if (cfg.Verbose) Log("tap -> left click");
         if (blip != null) blip.Trigger(sx, sy);
 
@@ -542,6 +635,7 @@ static unsafe class Program
 
     static void RightClick()
     {
+        UseWindowsPoint();
         if (cfg.Verbose) Log("hold -> right click");
         if (blip != null && cfg.BlipOnHold) blip.Trigger(sx, sy);
 
@@ -636,6 +730,44 @@ static unsafe class Program
     /// the coordinates inside the message, so the mouse pointer never moves and so can never
     /// flash into view. In "send" mode we move the pointer and click for real.
     /// </summary>
+    /// <summary>
+    /// Click where Windows saw the touch rather than where we mapped it, when the two disagree.
+    /// Windows already applies the screen's rotation, so its position is right by definition -
+    /// this keeps taps landing correctly even before the mapping has been learned.
+    /// </summary>
+    static void UseWindowsPoint()
+    {
+        // A quick tap can be over before Windows produces its click, so check one last time
+        // here - the click may have landed in the few ms between the lift and this moment.
+        if (!startWinValid && cfg.Calibrate)
+        {
+            long stamp = System.Threading.Interlocked.Read(ref winTouchTick);
+            if (stamp != 0 && (ulong)stamp >= startTick && (ulong)stamp - startTick < 900)
+            {
+                startWinValid = true;
+                startWinX = winTouchX; startWinY = winTouchY;
+            }
+        }
+
+        if (cfg.Verbose || tapDiagLeft > 0)
+        {
+            if (tapDiagLeft > 0) tapDiagLeft--;
+            long stamp = System.Threading.Interlocked.Read(ref winTouchTick);
+            Log("tap: ours=" + sx.ToString("0") + "," + sy.ToString("0")
+                + "  windows=" + (startWinValid ? startWinX.ToString("0") + "," + startWinY.ToString("0") : "NONE")
+                + "  lastWinEvent=" + (stamp == 0 ? "never" : ((long)GetTickCount64() - stamp) + "ms ago")
+                + "  winEvents=" + winTouchSeen + "  mapping=" + (calib.Ready ? "learned" : "from Windows")
+                + "  rotation=" + ScreenMap.Rotation);
+        }
+
+        if (!startWinValid) return;
+        if (Dist(startWinX - sx, startWinY - sy) > 4)
+        {
+            if (cfg.Verbose) Log("using Windows' touch position (" + startWinX.ToString("0") + "," + startWinY.ToString("0") + ") instead of ours");
+            sx = startWinX; sy = startWinY;
+        }
+    }
+
     static void Click(uint down, uint up)
     {
         if (cfg.ClickMode == "post" && PostClick(down == MOUSEEVENTF_RIGHTDOWN)) return;

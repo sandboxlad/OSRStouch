@@ -115,6 +115,8 @@ static unsafe class Native
     public const uint RIDEV_INPUTSINK = 0x100, RIDEV_DEVNOTIFY = 0x2000;
     public const uint RID_INPUT = 0x10000003, RIDI_PREPARSEDDATA = 0x20000005;
     public const int HIDP_STATUS_SUCCESS = 0x00110000;
+    public const uint MONITOR_DEFAULTTOPRIMARY = 1, MONITOR_DEFAULTTONEAREST = 2;
+    public const int ENUM_CURRENT_SETTINGS = -1;
     public const int SM_XVIRTUALSCREEN = 76, SM_YVIRTUALSCREEN = 77, SM_CXVIRTUALSCREEN = 78, SM_CYVIRTUALSCREEN = 79,
         SM_CXSCREEN = 0, SM_CYSCREEN = 1, SM_CXCURSOR = 13, SM_CYCURSOR = 14;
 
@@ -145,6 +147,10 @@ static unsafe class Native
     [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
     [DllImport("user32.dll")] public static extern bool ScreenToClient(IntPtr hwnd, ref POINT p);
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr ctx);
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromPoint(POINT pt, uint flags);
+    [DllImport("user32.dll")] public static extern bool GetMonitorInfoW(IntPtr monitor, byte* info);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool EnumDisplaySettingsExW(string device, int mode, byte* devmode, uint flags);
     [DllImport("kernel32.dll")] public static extern ulong GetTickCount64();
     [DllImport("kernel32.dll")] public static extern bool SetConsoleCtrlHandler(ConsoleCtrlFn handler, bool add);
     [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();

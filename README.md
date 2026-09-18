@@ -26,7 +26,7 @@ touchscreen, nothing to install.
 1. Extract the zip somewhere permanent - not straight out of the zip window
 2. Run `OsrsTouch.exe`. It sits in the tray next to the clock, no window
 3. In OSRS: Settings > Controls > turn ON "middle mouse button controls camera" and
-   "scroll wheel can change zoom distance"
+"scroll wheel can change zoom distance"
 4. In RuneLite: turn OFF "Highlight hovered tile" in the Tile Indicators plugin
 
 `Install-Autostart.bat` starts it with Windows. `Remove-Autostart.bat` undoes that and
@@ -41,9 +41,9 @@ I can't speak for Jagex, so make your own call - but here is exactly what it doe
 
 - It reads your touchscreen directly, through the same Windows API any app can use
 - It works out which gesture you are making, and blocks the click Windows would have
-  sent from a touch
+sent from a touch
 - It sends the equivalent mouse input instead: a swipe becomes a middle mouse drag,
-  a pinch becomes the scroll wheel, a tap becomes a click
+a pinch becomes the scroll wheel, a tap becomes a click
 
 It never reads game memory, never injects anything into the client, never modifies any
 game file, and does nothing on its own. You play every second of it yourself - it just
@@ -65,13 +65,18 @@ commented in the file. The ones people usually touch:
 Restart OsrsTouch after editing. Right-click the tray icon to open the settings file
 or the log.
 
-## Known limits
+## Rotated screens and second monitors
 
-Tested on a single landscape display. A second monitor, or a screen in portrait, may
-put taps in the wrong place - it maps touch coordinates onto the primary display. Open
-an issue if you hit that and I will fix it.
+A touchscreen reports in its own fixed frame, tied to the glass - it has no idea the
+display was rotated, and no idea which monitor it is. So OsrsTouch asks Windows which
+monitor the game window is on and which way up it is, and turns the panel's coordinates
+to match. All four orientations work, and so does a touchscreen that isn't the primary
+display. There is nothing to set up and nothing to calibrate.
+
+If a rotation ever does land taps in the wrong place, `ScreenRotation = 0 / 90 / 180 / 270`
+in the ini overrides what Windows reports. Please open an issue too.
 
 ## Building it yourself
 
-Six C# files, no dependencies, targets .NET Framework 4.x. `build-with-mono.sh` has the
+Eight C# files, no dependencies, targets .NET Framework 4.x. `build-with-mono.sh` has the
 one-line compile command.
